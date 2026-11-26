@@ -12,12 +12,13 @@ MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', '�
 MONTHS_NOM = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
 
 
-def fetch(url, timeout=30, retries=2):
+def fetch(url, timeout=30, retries=2, opener=None):
     last = None
     for i in range(retries + 1):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': UA})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            open_url = opener.open if opener else urllib.request.urlopen
+            with open_url(req, timeout=timeout) as r:
                 raw, ct = r.read(), r.headers.get('Content-Type', '')
             m = re.search(r'charset=([\w-]+)', ct) or re.search(r'charset=["\']?([\w-]+)', raw[:4000].decode('ascii', 'ignore'))
             return raw.decode(m.group(1) if m else 'utf-8', 'replace')
@@ -185,4 +186,7 @@ def detect_type(url):
     host = urlparse(url).netloc.lower()
     if 'afisha21.ru' in host: return 'afisha21'
     if 'rusdram21.ru' in host: return 'rusdram21'
-    return 'jsonld'
+    if host.startswith('www.'):
+        host = host[4:]
+    return {'teatr21.ru': 'teatr21', 'chuvdram.ru': 'chuvdram', 'puppet21.ru': 'puppet21',
+            'maiteatr.ru': 'maiteatr', 'chebtheatre.com': 'radario'}.get(host, 'jsonld')

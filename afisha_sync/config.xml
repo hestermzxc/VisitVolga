@@ -18,10 +18,11 @@
                    rusdram21 — официальная афиша Русского драмтеатра
                    jsonld    — любая страница с разметкой schema.org Event (многие билетные сервисы:
                                ticketform.ru, страницы событий театров и т.п.)
+                   teatr21, chuvdram, puppet21, maiteatr, radario — официальные афиши театров
       months   — для afisha21: на сколько месяцев вперёд смотреть (по умолчанию 4)
       venue    — код площадки на сайте (поле «Где»), если все события источника проходят в одном месте
       place    — или текст площадки с адресом, если кода нет
-      official — true, если это официальный сайт площадки: тогда его данные главнее afisha21
+      official — true, если это официальный сайт площадки: приоритет для совпавших показов
       kind     — тип события для названия («Спектакль», «Концерт»…), по умолчанию «Спектакль»
       name     — подпись источника в отчёте
       enabled  — false, чтобы временно отключить
@@ -29,9 +30,11 @@
   <sources>
     <source url="https://afisha21.ru/" name="afisha21.ru" months="4"/>
     <source url="https://rusdram21.ru/afisha/" name="Русский драмтеатр (официальный сайт)" venue="N9yWUgtr" official="true"/>
-    <!-- Афиша театра «Станиславский.com» показывается виджетом Radario и программой не читается;
-         его спектакли берутся из театральной афиши afisha21. -->
-    <source url="https://chebtheatre.com/afisha" name="Станиславский.com" venue="XmmVSW58" official="true" enabled="false"/>
+    <source url="https://teatr21.ru/afisha/" name="Камерный театр" venue="9el5cMQ7" official="true"/>
+    <source url="https://chuvdram.ru/events-and-tickets/" name="Чувашский драмтеатр" place="Чувашский драмтеатр (Красная пл., 7)" official="true"/>
+    <source url="https://puppet21.ru/afisha/" name="Театр кукол" venue="2MzTt8eT" official="true"/>
+    <source url="https://chebtheatre.com/afisha" name="Станиславский.com" venue="XmmVSW58" official="true"/>
+    <source url="https://maiteatr.ru/afisha" name="МАЙтеатр" venue="qjlO9oEW" official="true"/>
     <!-- Пример: <source url="https://ticketform.ru/events/kolybelnaya-08/" type="jsonld" venue="9el5cMQ7"/> -->
   </sources>
 

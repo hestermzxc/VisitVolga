@@ -183,7 +183,13 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         site.append(dict(r=r, d=TODAY if rec else a.date(), d2=dt.date(2099, 1, 1) if rec else last, name=r['IE_NAME'], rec=rec))
 
     cand, skipped = [], []
-    official = {g['code']: g['name'] for g in generic if g['official'] and g['code']}
+    official = collections.defaultdict(list)
+
+    def in_official_schedule(code, place, dates, title):
+        venue = code or place
+        return bool(venue) and any(
+            sim(title, entry) >= 0.9 for d in dates for entry in official.get((venue, d), ())
+        )
 
     # официальные сайты и прочие «структурные» источники
     for g in generic:
@@ -194,9 +200,13 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         for (d, title), x in by_day.items():
             e = x['e']
             price, swapped = fix_price(e['price'])
+            place = g['place'] or e['place']
+            if g['official'] and (g['code'] or place):
+                official[(g['code'] or place, d)].append(title)
+            kind = e['kind'] if e['kind'].lower() in GENRE_OK | {'моноспектакль', 'мастер-класс'} else g['kind']
             cand.append(dict(src=g['name'], srcid=e['url'], dates=[d], d1=d, d2=d, times=sorted(set(x['times'])),
-                             title=re.sub(r'\s*\((премьера|гастроли)\)', '', title, flags=re.I), sitename=official_name(title, g['kind']),
-                             place=g['place'] or e['place'], code=g['code'], p43='' if g['code'] else (g['place'] or e['place']),
+                             title=re.sub(r'\s*\((премьера|гастроли)\)', '', title, flags=re.I), sitename=official_name(title, kind),
+                             place=place, code=g['code'], p43='' if g['code'] else place,
                              price=price, tags='театр', flags=['цена в источнике была перевёрнута — исправлено'] if swapped else [],
                              raw=f"{d.strftime('%d.%m.%Y')} {', '.join(x['times'])} | {e['raw']}"))
 
@@ -205,11 +215,13 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         for t in a21['theatre']:
             d = t['date']
             code, p43 = theatres.get(t['place'], ('', t['place']))
-            if code in official or d < TODAY or (d, t['title'], t['place']) in seen_th: continue
+            if d < TODAY or (d, t['title'], t['place']) in seen_th: continue
             seen_th.add((d, t['title'], t['place']))
             name = re.sub(r'\s*\(\d+\+\)', '', t['title']).strip()
             parts = re.findall(r'"([^"]+)"', name)
             name = ' / '.join(parts) if parts else name.strip('"')
+            if in_official_schedule(code, p43, [d], name):
+                continue
             g = t['genre'].lower().split(' #')[0].strip()
             kind = g.capitalize() if g in GENRE_OK else 'Спектакль'
             if norm(name).split()[:1] == [kind.lower()]: kind = 'Спектакль'
@@ -254,12 +266,18 @@ def run(rows, a21, generic, venues, theatres, vname, today):
                     v2 = find_venue(rest[mm.end():])
                     if v2:
                         v = v2; what = (rest[:mm.start()] + ' ' + v2[3]).strip(); break
-            if v and v[1] in official: continue
             if v and v[1] == 'qjlO9uTs' and what.startswith('«'): what = 'Концерт ' + what
             if not v: flags.append('площадка не распознана — добавьте её в config.xml')
             what, name_flag = person_title(what.strip())
             if name_flag: flags.append(name_flag)
             elif what.startswith('«'): flags.append('проверить название: в источнике нет типа события (концерт, акция…)')
+            if v and dates:
+                dates = [d for d in dates if not in_official_schedule(v[1], v[2], [d], what)]
+                if not dates:
+                    continue
+                d1, d2 = dates[0], dates[-1]
+                if d2 < TODAY:
+                    continue
             times = times_of(a['intro'])
             rng = re.search(r'[Сс]\s*(\d{1,2})[:.](\d{2})\s*до', a['intro'])
             if rng: times = [f'{int(rng.group(1))}.{rng.group(2)}']

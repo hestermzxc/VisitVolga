@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import parsers, compare, report
+from theatre_sources import THEATRE_PARSERS
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -60,7 +61,8 @@ def main():
                 a21 = parsers.parse_afisha21(s['url'], s['months'], today, log)
                 info = f"анонсов {len(a21['ann'])}, театральных показов {len(a21['theatre'])}"
             else:
-                fn = parsers.parse_rusdram if s['type'] == 'rusdram21' else parsers.parse_jsonld
+                fn = (parsers.parse_rusdram if s['type'] == 'rusdram21'
+                      else THEATRE_PARSERS.get(s['type'], parsers.parse_jsonld))
                 ev = fn(s['url'], today, log)
                 if not ev:
                     info = ('событий не найдено — вероятно, афиша подгружается скриптом/виджетом (например, Radario) '
@@ -69,7 +71,7 @@ def main():
                 else:
                     generic.append(dict(s, events=ev))
                     last = max(e['d'] for e in ev)
-                    info = f"событий {len(ev)}, до {last.strftime('%d.%m.%Y')}" + (' (официальный — главнее afisha21 для этой площадки)' if s['official'] else '')
+                    info = f"событий {len(ev)}, до {last.strftime('%d.%m.%Y')}" + (' (официальный — приоритет для совпавших показов)' if s['official'] else '')
         except Exception as e:
             info = f'ошибка: {e}'
             log('  ! ' + info)

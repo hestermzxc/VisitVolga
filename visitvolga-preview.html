@@ -106,6 +106,40 @@ tr.flagged td{background:var(--warn)}
 @media(max-width:53rem){.events{grid-template-columns:repeat(2,minmax(0,1fr))}.filters{flex-wrap:wrap}.categories{gap:1.15rem}.filter-actions select{max-width:100%}}
 @media(max-width:34rem){.wrap{width:calc(100% - 2rem)}.masthead-inner{height:3.75rem}.masthead-label{display:none}.intro{padding:2rem 0 1.35rem}.intro p{font-size:1rem}.upload{grid-template-columns:1fr}.upload-tile{padding:.85rem;gap:.7rem}.upload-tile + .upload-tile{border-left:0;border-top:1px solid #e4dcf3}.upload-tile .button{margin-left:0}.file-mark{width:2.3rem;height:2.3rem}.listing{margin-top:1.5rem}.listing-title{gap:.55rem}.categories{gap:1rem;overflow:auto;max-width:100%}.category{font-size:.875rem}.filter-actions{flex-wrap:wrap}.events{grid-template-columns:1fr}.event{min-height:13rem}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.review-bar{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.8rem 1rem;margin-bottom:.8rem;border:1px solid #e4dcf3;border-radius:.75rem;background:#f7f4fc}
+.review-summary{font-size:.94rem;font-weight:800;color:var(--ink)}
+.review-hint{font-size:.875rem;color:var(--muted)}
+.filters{flex-wrap:wrap}
+#skipped-view{min-height:2.42rem}
+#skipped-view[aria-pressed="true"]{background:var(--light);border-color:var(--purple)}
+.card-actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem;padding-top:.85rem;border-top:1px solid var(--line)}
+.event.flagged .card-actions{border-top-color:#efdfac}
+.card-actions .button{min-height:2.38rem}
+.skip-event{background:transparent;color:var(--muted)}
+.skip-event:hover{background:var(--light);color:var(--purple-dark)}
+.card-status{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:.65rem}
+.skipped-label{background:#eeeaf0;color:#61576b}
+.event-editor{width:min(35rem,calc(100% - 2rem));max-height:calc(100% - 2rem);padding:0;border:1px solid var(--line);border-radius:1rem;background:var(--white);color:var(--ink);box-shadow:0 18px 70px #241a4540}
+.event-editor::backdrop{background:#21163480}
+.event-editor form{padding:1.45rem}
+.editor-header{display:flex;align-items:flex-start;justify-content:space-between;gap:.8rem;margin-bottom:1rem}
+.editor-header h2{font-size:1.5rem;line-height:1.25;letter-spacing:-.035em}
+.editor-header p{margin-top:.28rem;font-size:.875rem;color:var(--muted);overflow-wrap:anywhere}
+.editor-close{font-size:1.35rem;line-height:1;min-width:2.35rem;min-height:2.35rem}
+.editor-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem}
+.editor-fields label{display:grid;gap:.3rem;font-size:.875rem;font-weight:800}
+.editor-fields .wide{grid-column:1 / -1}
+.editor-fields input{width:100%;min-width:0;padding:.56rem .65rem;border:1px solid var(--line);border-radius:.45rem;color:var(--ink);font:inherit;font-weight:500;font-size:1rem;background:var(--paper)}
+.editor-fields input:focus-visible{outline:2px solid var(--purple);outline-offset:1px}
+.editor-actions{display:flex;justify-content:flex-end;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:1rem}
+.editor-actions .text-button{margin-right:auto}
+#editor-error{margin-top:.85rem}
+@media(max-width:34rem){
+  .review-bar{align-items:flex-start;flex-wrap:wrap}
+  .event-editor form{padding:1rem}
+  .editor-fields{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -153,6 +187,13 @@ tr.flagged td{background:var(--warn)}
         <h2 id="listing-title">Все мероприятия</h2>
         <span id="mode-label" class="mode-label">Демо</span>
       </div>
+      <div class="review-bar" id="review-bar" hidden>
+        <div>
+          <p id="review-summary" class="review-summary" role="status"></p>
+          <p id="review-hint" class="review-hint"></p>
+        </div>
+        <button type="button" class="button primary" id="download-csv">Скачать CSV</button>
+      </div>
       <div class="filters">
         <div id="categories" class="categories" aria-label="Категории мероприятий"></div>
         <div class="filter-actions">
@@ -162,22 +203,49 @@ tr.flagged td{background:var(--warn)}
             <span class="icon chevron" aria-hidden="true"></span>
           </label>
           <button id="warn-only" class="button warn-filter" type="button" aria-pressed="false" hidden><span class="icon warning" aria-hidden="true"></span> На проверку</button>
+          <button id="skipped-view" class="button secondary" type="button" aria-pressed="false" hidden>Пропущенные</button>
         </div>
       </div>
       <div class="listing-status">
-        <p id="results" role="status" aria-live="polite"></p>
+        <p id="results" role="status" aria-live="polite" tabindex="-1"></p>
         <button type="button" class="text-button" id="report-toggle" hidden>Показать изменения из отчёта</button>
       </div>
       <div id="report-panel" class="report-panel" hidden></div>
       <div id="events" class="events"></div>
       <div id="empty" class="empty" hidden>
-        <h3>События не найдены</h3>
-        <p>Попробуйте выбрать другой месяц или категорию.</p>
+        <h3 id="empty-title">События не найдены</h3>
+        <p id="empty-hint">Попробуйте выбрать другой месяц или категорию.</p>
         <button type="button" class="button secondary" id="clear-filters">Сбросить фильтры</button>
       </div>
       <div class="pagination"><button type="button" class="button secondary" id="show-more" hidden>Показать ещё</button></div>
     </section>
   </main>
+  <dialog id="event-editor" class="event-editor" aria-labelledby="editor-title">
+    <form id="edit-form">
+      <header class="editor-header">
+        <div>
+          <h2 id="editor-title">Редактировать событие</h2>
+          <p id="editor-subtitle"></p>
+        </div>
+        <button type="button" id="close-editor" class="button secondary editor-close" aria-label="Закрыть">×</button>
+      </header>
+      <div class="editor-fields">
+        <label class="wide">Название<input name="title" required autofocus></label>
+        <label>Начало<input name="startValue" placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"></label>
+        <label>Окончание<input name="endValue" placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"></label>
+        <label class="wide">Дата и время на карточке<input name="whenValue" placeholder="Например, 29 ноября в 18:00"></label>
+        <label class="wide">Площадка и адрес<input name="placeText" placeholder="Например, Камерный театр"></label>
+        <label>Код площадки в Битриксе<input name="placeCode"></label>
+        <label>Цена<input name="price" placeholder="Например, от 500 руб."></label>
+      </div>
+      <p id="editor-error" class="error" role="alert" hidden></p>
+      <div class="editor-actions">
+        <button type="button" id="undo-event" class="text-button" hidden>Сбросить правки карточки</button>
+        <button type="button" id="cancel-edit" class="button secondary">Отмена</button>
+        <button type="submit" class="button primary">Сохранить правки</button>
+      </div>
+    </form>
+  </dialog>
   <footer class="wrap page-footer">VisitVolga <span>Предпросмотр для редакции</span></footer>
 <script>
 /*! ExcelJS 19-10-2023 */
@@ -294,7 +362,10 @@ const previewData = (() => {
     const iso = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/.exec(original);
     const local = /^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:$|\s)/.exec(original);
     const parts = iso ? [iso[1], iso[2], iso[3]] : local ? [local[3], local[2], local[1]] : [];
-    return parts.length ? parts.map(item => item.padStart(2, '0')).join('-') : '';
+    if (!parts.length) return '';
+    const key = parts.map(item => item.padStart(2, '0')).join('-');
+    const date = new Date(key + 'T00:00:00Z');
+    return !isNaN(date) && date.toISOString().slice(0, 10) === key ? key : '';
   }
 
   function dateText(value) {
@@ -314,7 +385,17 @@ const previewData = (() => {
 
   function cleanVenue(value) {
     return String(value || '').replace(/^\[HTML\]/i, '').replace(/<[^>]*>/g, ' ')
-      .replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+      .replace(/&nbsp;|&#160;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+      .replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+  }
+
+  const editable = {
+    title: 'IE_NAME', startValue: 'IE_ACTIVE_FROM', endValue: 'IE_ACTIVE_TO',
+    whenValue: 'IP_PROP28', placeCode: 'IP_PROP17', placeText: 'IP_PROP43', price: 'IP_PROP19'
+  };
+
+  function venueLabel(text, code) {
+    return text || (Object.hasOwn(venueNames, code) ? venueNames[code] : code);
   }
 
   function readCSV(buffer) {
@@ -330,24 +411,108 @@ const previewData = (() => {
     if (!keys) throw new Error('CSV-файл пуст.');
     const columns = keys.map(key => key.trim().toUpperCase());
     if (!columns.includes('IE_NAME')) throw new Error('В CSV не найден столбец IE_NAME с названием события.');
-    const events = rows.flatMap(row => {
+    if (new Set(columns).size !== columns.length) throw new Error('В CSV есть повторяющиеся названия столбцов.');
+    if (rows.some(row => row.length > keys.length)) throw new Error('В CSV есть строки с лишними столбцами.');
+    const events = rows.map((row, index) => {
       const cell = key => (row[columns.indexOf(key)] || '').trim();
-      const title = cell('IE_NAME');
-      if (!title) return [];
-      const start = cell('IE_ACTIVE_FROM');
-      const stop = cell('IE_ACTIVE_TO');
-      const placeCode = cell('IP_PROP17');
-      return [{
-        title, start: dateKey(start), end: dateKey(stop),
-        when: cell('IP_PROP28') || dateText(start),
-        venue: cleanVenue(cell('IP_PROP43')) || (typeof venueNames !== 'undefined' ? venueNames[placeCode] : '') || placeCode,
-        placeCode, price: cell('IP_PROP19'), category: categoryFor(title, ''),
+      const fields = Object.fromEntries(Object.entries(editable).map(([name, key]) => [name, cell(key)]));
+      fields.placeText = cleanVenue(fields.placeText);
+      return {
+        ...fields, index, start: dateKey(fields.startValue), end: dateKey(fields.endValue),
+        when: fields.whenValue || dateText(fields.startValue),
+        venue: venueLabel(fields.placeText, fields.placeCode),
+        category: categoryFor(fields.title, ''),
         xml: cell('IE_XML_ID'), code: cell('IE_CODE'), id: cell('IE_ID'),
-        flags: []
-      }];
+        flags: fields.title ? [] : ['В CSV не заполнено название события']
+      };
     });
-    if (!events.length) throw new Error('В CSV не найдено событий с названием.');
-    return events;
+    if (!events.length) throw new Error('В CSV не найдено событий.');
+    return {events, headers: keys, rows};
+  }
+
+  function formatDate(value) {
+    if (!value) return '';
+    const match = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+([0-2]?\d):([0-5]\d)(?::([0-5]\d))?)?$/.exec(value);
+    if (!match || Number(match[4] || 0) > 23) {
+      throw new Error('Укажите дату в формате ДД.ММ.ГГГГ и при необходимости время ЧЧ:ММ.');
+    }
+    const [, day, month, year, hour, minute, second] = match;
+    const key = year + '-' + month.padStart(2, '0') + '-' + day.padStart(2, '0');
+    if (!dateKey(key)) throw new Error('Укажите существующую дату.');
+    return day.padStart(2, '0') + '.' + month.padStart(2, '0') + '.' + year
+      + (hour ? ' ' + hour.padStart(2, '0') + ':' + minute + ':' + (second || '00') : '');
+  }
+
+  function editFields(event, values) {
+    const changes = {};
+    for (const key of Object.keys(editable)) {
+      const value = values[key].trim();
+      if (value !== event[key]) changes[key] = value;
+    }
+    if (!values.title.trim()) throw new Error('Введите название события.');
+    for (const key of ['startValue', 'endValue']) {
+      if (Object.hasOwn(changes, key)) changes[key] = formatDate(changes[key]);
+    }
+    const start = changes.startValue ?? event.startValue;
+    const end = changes.endValue ?? event.endValue;
+    if ((Object.hasOwn(changes, 'startValue') || Object.hasOwn(changes, 'endValue')) && dateKey(start) && dateKey(end)) {
+      const sortKey = (date, fallback) => {
+        const clock = /[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(date);
+        return dateKey(date) + ' ' + (clock
+          ? clock[1].padStart(2, '0') + ':' + clock[2] + ':' + (clock[3] || '00') : fallback);
+      };
+      if (sortKey(end, '23:59:59') < sortKey(start, '00:00:00')) {
+        throw new Error('Окончание не может быть раньше начала.');
+      }
+    }
+    if (Object.hasOwn(changes, 'startValue') && !Object.hasOwn(changes, 'whenValue')
+        && (!event.whenValue || event.whenValue === dateText(event.startValue))) {
+      changes.whenValue = dateText(start);
+    }
+    for (const key of Object.keys(changes)) if (changes[key] === event[key]) delete changes[key];
+    return changes;
+  }
+
+  function applyChanges(event, changes) {
+    if (!changes) return event;
+    const next = {...event, ...changes};
+    next.start = dateKey(next.startValue);
+    next.end = dateKey(next.endValue);
+    next.when = next.whenValue || dateText(next.startValue);
+    if (Object.hasOwn(changes, 'placeText') || Object.hasOwn(changes, 'placeCode')) {
+      next.venue = venueLabel(next.placeText, next.placeCode);
+    }
+    if (changes.title) next.category = categoryFor(next.title, next.categoryLabel || '') || next.category;
+    if (changes.title && !event.title) next.flags = event.flags.filter(flag => flag !== 'В CSV не заполнено название события');
+    return next;
+  }
+
+  function writeCSV(csv, edits, skipped) {
+    const headers = [...csv.headers];
+    const columns = headers.map(key => key.trim().toUpperCase());
+    for (const [index, changes] of edits) {
+      if (skipped.has(index)) continue;
+      for (const name of Object.keys(changes)) {
+        const key = editable[name];
+        if (!columns.includes(key)) {
+          headers.push(key);
+          columns.push(key);
+        }
+      }
+    }
+    const quote = value => /[";\r\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+    const lines = [headers.map(quote).join(';')];
+    csv.rows.forEach((row, index) => {
+      if (skipped.has(index)) return;
+      const output = headers.map((_, i) => row[i] ?? '');
+      for (const [name, value] of Object.entries(edits.get(index) || {})) {
+        const field = name === 'placeText' && value
+          ? '[HTML]' + value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : value;
+        output[columns.indexOf(editable[name])] = field;
+      }
+      lines.push(output.map(quote).join(';'));
+    });
+    return lines.join('\r\n') + '\r\n';
   }
 
   function yellow(cell) {
@@ -399,15 +564,19 @@ const previewData = (() => {
       if (!title) return null;
       const category = read('Категория');
       const reason = read('Проверить');
+      const reportDate = value => value instanceof Date
+        ? value.toISOString().slice(0, 10).split('-').reverse().join('.') : value || '';
       return {
         title, start: dateKey(date('Начало')), end: dateKey(date('Окончание')),
         when: read('Дата/время (текст)') || dateText(date('Начало')),
         venue: cleanVenue(read('Площадка')), placeCode: read('Код площадки'),
+        startValue: reportDate(date('Начало')), endValue: reportDate(date('Окончание')),
+        whenValue: read('Дата/время (текст)'), placeText: cleanVenue(read('Площадка')),
         price: read('Цена'), category: categoryFor(title, category), categoryLabel: category,
         xml: read('Внешний код'), code: read('Символьный код'), id: '',
         flags: reason ? reason.split(/\s*;\s*/).filter(Boolean) : highlighted ? ['Жёлтая строка в отчёте'] : []
       };
-    });
+    }).map((event, index) => ({...event, index}));
     const changes = sheetRows(editSheet, (read, date, highlighted) => {
       const title = read('Событие на сайте');
       if (!title) return null;
@@ -453,7 +622,7 @@ const previewData = (() => {
       const venue = match?.venue && (!item.venue || item.placeCode === match.placeCode) ? match.venue : item.venue;
       return {
         ...item, venue, category: match?.category || item.category, categoryLabel: match?.categoryLabel,
-        flags: [...new Set([...(match?.flags || []), ...(warnedChanges.get(item.id) || [])])]
+        flags: [...new Set([...item.flags, ...(match?.flags || []), ...(warnedChanges.get(item.id) || [])])]
       };
     });
     return {events, unmatched: report.events.filter(item => item.flags.length && !matches.has(item)).length};
@@ -468,7 +637,7 @@ const previewData = (() => {
     ['Читаем зимние сказки', '2026-12-12', '12 декабря, 12:00', 'Национальная библиотека Чувашии', 'Бесплатно', 'Детям']
   ].map(([title, start, when, venue, price, category]) => ({title, start, when, venue, price, category, flags: []}));
 
-  return {readCSV, readXLSX, joinEvents, monthLabel, demo};
+  return {readCSV, readXLSX, joinEvents, monthLabel, editFields, applyChanges, writeCSV, demo};
 })();
 if (typeof module !== 'undefined') module.exports = previewData;
 
@@ -496,8 +665,12 @@ const venueNames = {
 const get = id => document.getElementById(id);
 const filterNames = ['Все', 'Спорт', 'Детям', 'Культура', 'Выставки'];
 const pageSize = 36;
-const state = {csv: null, report: null, category: 'Все', month: '', warning: false, limit: pageSize, showChanges: false};
+const state = {csv: null, report: null, category: 'Все', month: '', warning: false,
+  limit: pageSize, showChanges: false, showSkipped: false};
 const latestLoad = {csv: 0, xlsx: 0};
+const editor = get('event-editor');
+const form = get('edit-form');
+let editTarget;
 
 function node(tag, className, value) {
   const element = document.createElement(tag);
@@ -512,11 +685,12 @@ function icon(name) {
   return element;
 }
 
-function card(event) {
+function card(event, base, review) {
   const article = node('article', event.flags.length ? 'event flagged' : 'event');
+  if (review) article.dataset.event = base.index;
   const genre = event.categoryLabel || event.category;
   if (genre) article.append(node('p', 'event-type', genre));
-  article.append(node('h3', '', event.title));
+  article.append(node('h3', '', event.title || 'Без названия'));
   const metadata = node('div', 'metadata');
   for (const [symbol, value] of [
     ['calendar', event.when || 'Дата и время не указаны'],
@@ -535,7 +709,50 @@ function card(event) {
     details.append(summary, list);
     article.append(details);
   }
+  if (review) {
+    const skipped = review.skipped.has(base.index);
+    const actions = node('div', 'card-actions');
+    const statuses = node('div', 'card-status');
+    if (skipped) statuses.append(node('span', 'mode-label skipped-label', 'Пропущено'));
+    if (review.edits.has(base.index)) statuses.append(node('span', 'mode-label', 'Изменено'));
+    if (statuses.childElementCount) article.append(statuses);
+    const edit = node('button', 'button secondary edit-event', 'Редактировать');
+    edit.type = 'button';
+    edit.addEventListener('click', () => openEditor(base, event, review));
+    const skip = node('button', 'button skip-event', skipped ? 'Вернуть' : 'Пропустить');
+    skip.type = 'button';
+    skip.addEventListener('click', () => {
+      if (skipped) review.skipped.delete(base.index);
+      else review.skipped.add(base.index);
+      updateView();
+      focusEvent(base.index, '.skip-event');
+    });
+    actions.append(edit, skip);
+    article.append(actions);
+  }
   return article;
+}
+
+function focusEvent(index, control) {
+  (get('events').querySelector('[data-event="' + index + '"] ' + control) || get('results')).focus();
+}
+
+function openEditor(base, current, review) {
+  editTarget = {base, review};
+  for (const input of form.querySelectorAll('input')) input.value = current[input.name];
+  get('editor-subtitle').textContent = base.title || 'Без названия';
+  get('editor-error').hidden = true;
+  get('undo-event').hidden = !review.edits.has(base.index);
+  editor.showModal();
+}
+
+function finishEdit(changes) {
+  const {base, review} = editTarget;
+  if (Object.keys(changes).length) review.edits.set(base.index, changes);
+  else review.edits.delete(base.index);
+  editor.close();
+  updateView();
+  focusEvent(base.index, '.edit-event');
 }
 
 function showChanges(report) {
@@ -586,14 +803,29 @@ function monthKeys(event) {
 function updateView() {
   const csv = state.csv?.events;
   const report = state.report?.data;
+  const review = state.csv || state.report;
   const demo = !csv && !report;
   const joined = demo ? {events: previewData.demo, unmatched: 0} : previewData.joinEvents(csv, report);
-  const data = joined.events;
-  const warnings = data.filter(item => item.flags.length).length;
-  const months = [...new Set(data.flatMap(monthKeys))].sort();
+  const skipped = review?.skipped.size || 0;
+  if (!skipped) state.showSkipped = false;
+  const data = joined.events
+    .filter(event => !review || review.skipped.has(event.index) === state.showSkipped)
+    .map(base => ({base, view: previewData.applyChanges(base, review?.edits.get(base.index))}));
+  const warnings = data.filter(item => item.view.flags.length).length;
+  const months = [...new Set(data.flatMap(item => monthKeys(item.view)))].sort();
+  get('review-bar').hidden = !review;
+  get('review-summary').textContent = review
+    ? 'Изменено: ' + review.edits.size + ' · Пропущено: ' + skipped : '';
+  get('review-hint').textContent = csv ? 'Правки и пропуски сохраняются в скачанном CSV.'
+    : 'Правки видны в этой вкладке. Для выгрузки загрузите исходный CSV.';
+  get('download-csv').hidden = !csv;
+  get('download-csv').disabled = !!csv && skipped >= csv.length;
+  get('skipped-view').hidden = !skipped;
+  get('skipped-view').textContent = state.showSkipped ? 'Вернуться к списку' : 'Пропущенные (' + skipped + ')';
+  get('skipped-view').setAttribute('aria-pressed', String(state.showSkipped));
   get('mode-label').textContent = demo ? 'Демо' : csv ? 'CSV' : 'Отчёт XLSX';
   get('reset-files').hidden = demo;
-  get('warn-only').hidden = !report;
+  get('warn-only').hidden = !report && !warnings && !state.warning;
   get('warn-only').setAttribute('aria-pressed', String(state.warning));
   get('report-toggle').hidden = !report?.changes.length;
   get('report-toggle').textContent = state.showChanges ? 'Скрыть изменения из отчёта' : 'Показать изменения из отчёта';
@@ -607,15 +839,20 @@ function updateView() {
   }
   month.value = state.month;
   for (const button of get('categories').children) button.setAttribute('aria-pressed', String(button.textContent === state.category));
-  const filtered = data.filter(event => (state.category === 'Все' || event.category === state.category)
+  const filtered = data.filter(({view: event}) => (state.category === 'Все' || event.category === state.category)
     && (!state.month || monthKeys(event).includes(state.month))
     && (!state.warning || event.flags.length));
   const visible = filtered.slice(0, state.limit);
-  get('events').replaceChildren(...visible.map(card));
+  get('events').replaceChildren(...visible.map(({base, view}) => card(view, base, review)));
   get('empty').hidden = !!filtered.length;
+  const allSkipped = !data.length && !!skipped && !state.showSkipped;
+  get('empty-title').textContent = allSkipped ? 'Все события пропущены' : 'События не найдены';
+  get('empty-hint').textContent = allSkipped ? 'Откройте пропущенные события, чтобы вернуть нужные строки.'
+    : 'Попробуйте выбрать другой месяц или категорию.';
+  get('clear-filters').hidden = allSkipped;
   get('show-more').hidden = visible.length >= filtered.length;
   const labels = ['Показано ' + visible.length + ' из ' + data.length + ' событий'];
-  if (report) labels.push('На проверку: ' + warnings);
+  if (report || warnings) labels.push('На проверку: ' + warnings);
   if (joined.unmatched) labels.push('Строк на проверку без совпадения в CSV: ' + joined.unmatched);
   get('results').textContent = labels.join(' · ');
   showChanges(report);
@@ -643,13 +880,14 @@ async function openFile(file, type) {
     const parsed = type === 'csv' ? previewData.readCSV(buffer) : await previewData.readXLSX(buffer, window.ExcelJS);
     if (request !== latestLoad[type]) return;
     if (type === 'csv') {
-      state.csv = {events: parsed, name: file.name};
-      get('csv-status').textContent = file.name + ' · ' + parsed.length + ' событий';
+      state.csv = {...parsed, name: file.name, edits: new Map(), skipped: new Set()};
+      get('csv-status').textContent = file.name + ' · ' + parsed.events.length + ' событий';
     } else {
-      state.report = {data: parsed, name: file.name};
+      state.report = {data: parsed, edits: new Map(), skipped: new Set()};
       get('xlsx-status').textContent = file.name;
       state.showChanges = !parsed.events.length;
     }
+    state.showSkipped = false;
     resetFilters();
     updateView();
   } catch (error) {
@@ -703,6 +941,7 @@ get('reset-files').addEventListener('click', () => {
   }
   state.csv = state.report = null;
   state.showChanges = false;
+  state.showSkipped = false;
   get('csv-status').textContent = 'Например, import_new_events.csv';
   get('xlsx-status').textContent = 'afisha_sverka.xlsx · по желанию';
   resetFilters();
@@ -718,6 +957,36 @@ get('warn-only').addEventListener('click', () => {
   state.warning = !state.warning;
   state.limit = pageSize;
   updateView();
+});
+get('skipped-view').addEventListener('click', () => {
+  state.showSkipped = !state.showSkipped;
+  resetFilters();
+  updateView();
+});
+get('download-csv').addEventListener('click', () => {
+  const csv = state.csv;
+  if (!csv || csv.skipped.size >= csv.events.length) return;
+  const output = previewData.writeCSV(csv, csv.edits, csv.skipped);
+  const url = URL.createObjectURL(new Blob([output], {type: 'text/csv;charset=utf-8'}));
+  const link = node('a');
+  link.href = url;
+  link.download = csv.name.replace(/\.csv$/i, '') + '_reviewed.csv';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+for (const id of ['close-editor', 'cancel-edit']) get(id).addEventListener('click', () => editor.close());
+get('undo-event').addEventListener('click', () => finishEdit({}));
+editor.addEventListener('close', () => { editTarget = undefined; });
+form.addEventListener('submit', event => {
+  event.preventDefault();
+  if (!editTarget) return;
+  try {
+    finishEdit(previewData.editFields(editTarget.base, Object.fromEntries(new FormData(form))));
+  } catch (error) {
+    const message = get('editor-error');
+    message.textContent = error.message;
+    message.hidden = false;
+  }
 });
 get('report-toggle').addEventListener('click', () => {
   state.showChanges = !state.showChanges;

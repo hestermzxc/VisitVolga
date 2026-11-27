@@ -1,5 +1,6 @@
 """Сопоставление афиши сайта (выгрузка CSV из Битрикса) с событиями из источников."""
 import re, random, datetime as dt, collections
+from decimal import Decimal
 from difflib import SequenceMatcher
 from parsers import year_for
 
@@ -51,15 +52,38 @@ def price_of(s):
 
 
 def nums(p):
-    return [int(x.replace(' ', '')) for x in re.findall(r'\d[\d ]*', p or '')]
+    return [Decimal(x.replace(' ', '').replace(',', '.'))
+            for x in re.findall(r'\d[\d ]*(?:[,.]\d{1,2}(?!\d))?', p or '')]
+
+
+def format_price(minimum, maximum):
+    def rubles(value):
+        number = Decimal(value)
+        precision = '.0f' if number == number.to_integral_value() else '.2f'
+        return format(number, precision).replace('.', ',')
+
+    if maximum is None:
+        return f'от {rubles(minimum)} руб.'
+    if minimum == maximum:
+        return f'{rubles(minimum)} руб.'
+    return f'{rubles(minimum)}–{rubles(maximum)} руб.'
 
 
 def fix_price(p):
     """«4000–1200 руб.» (опечатка в источнике) -> «1200–4000 руб.»"""
     n = nums(p)
     if len(n) == 2 and n[0] > n[1] and not p.startswith('от'):
-        return f'{n[1]}–{n[0]} руб.', True
+        return format_price(n[1], n[0]), True
     return p, False
+
+
+def combined_session_price(prices):
+    bounds = [nums(price) for price in prices]
+    if not bounds or any(not value for value in bounds):
+        return ''
+    minimum = min(min(value) for value in bounds)
+    maximum = None if any(price.startswith('от ') for price in prices) else max(max(value) for value in bounds)
+    return format_price(minimum, maximum)
 
 
 CHUV = str.maketrans({'ӑ': 'а', 'ă': 'а', 'ӗ': 'е', 'ĕ': 'е', 'ҫ': 'с', 'ç': 'с', 'ӳ': 'у', 'ÿ': 'у', 'Ӑ': 'А', 'Ă': 'А',
@@ -169,7 +193,7 @@ def run(rows, a21, generic, venues, theatres, vname, today):
     codes_used = {r['IE_CODE'] for r in rows}
 
     def pdt(s):
-        for f in ('%d.%m.%Y %H:%M:%S', '%d.%m.%Y'):
+        for f in ('%d.%m.%Y %H:%M:%S', '%d.%m.%Y %H:%M', '%d.%m.%Y'):
             try: return dt.datetime.strptime(s.strip(), f)
             except ValueError: pass
 
@@ -196,19 +220,37 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         by_day = collections.OrderedDict()
         for e in g['events']:
             if e['d'] < TODAY or not e['title']: continue
-            by_day.setdefault((e['d'], e['title']), dict(e=e, times=[]))['times'] += e['times']
-        for (d, title), x in by_day.items():
-            e = x['e']
+            by_day.setdefault((e['d'], e['title']), []).append(e)
+        for (d, title), sessions in by_day.items():
+            e = sessions[0]
+            times = sorted({time for item in sessions for time in item['times']}, key=lambda value: tuple(map(int, value.split('.'))))
             price, swapped = fix_price(e['price'])
+            flags = ['цена в источнике была перевёрнута — исправлено'] if swapped else []
+            session_priced = any(item.get('session_priced') for item in sessions)
+            session_prices = {}
+            for time in times if session_priced else ():
+                priced = [item for item in sessions if time in item['times']]
+                values = {fix_price(item['price'])[0] for item in priced}
+                value = next(iter(values)) if len(values) == 1 else ''
+                sources = {item.get('price_url') or item['url'] for item in priced if item['price']}
+                session_prices[time] = (value, next(iter(sources)) if len(sources) == 1 else '')
+            if session_priced:
+                price = combined_session_price([value for value, _ in session_prices.values()])
+                if not price:
+                    reasons = sorted({item['price_issue'] for item in sessions if item.get('price_issue')})
+                    flags.extend(reasons or ['цена не подтверждена для всех сеансов'])
             place = g['place'] or e['place']
             if g['official'] and (g['code'] or place):
                 official[(g['code'] or place, d)].append(title)
             kind = e['kind'] if e['kind'].lower() in GENRE_OK | {'моноспектакль', 'мастер-класс'} else g['kind']
-            cand.append(dict(src=g['name'], srcid=e['url'], dates=[d], d1=d, d2=d, times=sorted(set(x['times'])),
+            updates = ' | '.join(f'{time}: {value} ({link})' if link else f'{time}: {value}'
+                                 for time, (value, link) in session_prices.items() if value)
+            cand.append(dict(src=g['name'], srcid=e['url'], dates=[d], d1=d, d2=d, times=times,
                              title=re.sub(r'\s*\((премьера|гастроли)\)', '', title, flags=re.I), sitename=official_name(title, kind),
                              place=place, code=g['code'], p43='' if g['code'] else place,
-                             price=price, tags='театр', flags=['цена в источнике была перевёрнута — исправлено'] if swapped else [],
-                             raw=f"{d.strftime('%d.%m.%Y')} {', '.join(x['times'])} | {e['raw']}"))
+                             price=price, tags='театр', flags=flags, session_priced=session_priced,
+                             session_prices=session_prices,
+                             raw=' | '.join(filter(None, [f"{d.strftime('%d.%m.%Y')} {', '.join(times)}", e['raw'], updates]))))
 
     if a21:
         seen_th = set()
@@ -321,8 +363,68 @@ def run(rows, a21, generic, venues, theatres, vname, today):
 
     def site_times(s): return sorted(set(times_of(s['r']['IP_PROP28'])))
 
+    def ticket_card_times(s):
+        _, sep, start = s['r']['IE_ACTIVE_FROM'].strip().partition(' ')
+        initial = set(times_of(start)) if sep else set()
+        listed = set(site_times(s))
+        if listed and not initial.issubset(listed):
+            return set()
+        return listed or initial
+
+    def matching_ticket_cards(c):
+        matches = []
+        for s in site:
+            if s['rec'] or s['d'] != c['d1'] or s['d2'] != c['d1']:
+                continue
+            venue = s['r']['IP_PROP17']
+            place = s['r']['IP_PROP43'].replace('[HTML]', '')
+            same_venue = c['code'] == venue if c['code'] else (
+                not venue and bool(c['p43']) and norm(c['p43']) == norm(place)
+            )
+            if not same_venue or sim(c['sitename'], s['name']) < 0.9:
+                continue
+            times = ticket_card_times(s)
+            if times and times.issubset(c['session_prices']):
+                matches.append((s, times))
+        return matches
+
+    def price_signature(price):
+        values = sorted(nums(price))
+        if not values and re.search(r'бесплатно|вход свободный', price, re.I):
+            values = [Decimal(0)]
+        return price.strip().lower().startswith('от '), values
+
+    def same_ticket_price(current, checked):
+        old = price_signature(current)
+        new = price_signature(checked)
+        # Минимальная цена сама по себе не отменяет уже известный максимум.
+        return old == new or (new[0] and old[1][:1] == new[1])
+
     changes, new, same, seen = [], [], 0, set()
+    ticket_matches = set()
     for c in cand:
+        if c.get('session_priced'):
+            targets = matching_ticket_cards(c)
+            if targets:
+                c['match'] = c['venue_conflict'] = None
+                used_times = collections.Counter(time for _, times in targets for time in times)
+                for target, times in targets:
+                    ticket_matches.add(target['r']['IE_ID'])
+                    old_price = target['r']['IP_PROP19']
+                    price = combined_session_price([c['session_prices'][time][0] for time in times])
+                    if any(used_times[time] > 1 for time in times):
+                        notes = [('Проверка цены', old_price, 'несколько карточек Битрикса для одного сеанса')]
+                    elif not price:
+                        notes = [('Проверка цены', old_price, '; '.join(c['flags']) or 'цена сеанса не подтверждена')]
+                    elif not same_ticket_price(old_price, price):
+                        notes = [('Цена', old_price, price)]
+                    else:
+                        same += 1
+                        continue
+                    source_urls = {c['session_prices'][time][1] for time in times if c['session_prices'][time][1]}
+                    source = dict(c, srcid=next(iter(source_urls))) if len(source_urls) == 1 else c
+                    changes.append((source, notes, target))
+                continue
         s = c['match']
         if c['venue_conflict']:
             s = c['venue_conflict']
@@ -339,14 +441,19 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         st, ct = site_times(s), sorted(set(c['times']))
         if ct and st and ct != st: notes.append(('Время', ', '.join(st), ', '.join(ct)))
         sp_, cp = nums(s['r']['IP_PROP19']), nums(c['price'])
-        if cp and sp_ and sorted(sp_) != sorted(cp): notes.append(('Цена', s['r']['IP_PROP19'], c['price']))
+        if c.get('session_priced'):
+            if not c['price'] or not same_ticket_price(s['r']['IP_PROP19'], c['price']):
+                reason = '; '.join(c['flags']) or 'не совпали дата, время или площадка сеанса'
+                notes.append(('Проверка цены', s['r']['IP_PROP19'], reason))
+        elif cp and sp_ and sorted(sp_) != sorted(cp):
+            notes.append(('Цена', s['r']['IP_PROP19'], c['price']))
         if not notes: same += 1; continue
         key = (s['r']['IE_ID'], tuple(notes))
         if key in seen: continue
         seen.add(key)
         changes.append((c, notes, s))
 
-    matched = {c['match']['r']['IE_ID'] for c in cand if c['match']} | {c['venue_conflict']['r']['IE_ID'] for c in cand if c['venue_conflict']}
+    matched = {c['match']['r']['IE_ID'] for c in cand if c['match']} | {c['venue_conflict']['r']['IE_ID'] for c in cand if c['venue_conflict']} | ticket_matches
     missing = []
     for s in site:
         if s['r']['IE_ID'] in matched or s['rec']: continue
@@ -392,7 +499,7 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         codes_used.add(code)
         flags = list(c['flags'])
         if c['p43'] and '(' not in c['p43'] and not c['code']: flags.append('добавить адрес площадки')
-        if not c['price']: flags.append('цена не указана в источнике')
+        if not c['price'] and not c.get('session_priced'): flags.append('цена не указана в источнике')
         if not c['times']: flags.append('время не указано в источнике')
         xml = 'a21-' + c['srcid'].rsplit('/', 1)[-1] if '/go/' in c['srcid'] else 'src-' + afrom[:10].replace('.', '') + '-' + code[:40]
         imp.append(dict(c=c, flags=flags, row={

@@ -8,9 +8,10 @@ from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, build_opener
 
 from parsers import MONTHS_GEN, MONTHS_NOM, fetch, sp, year_for
+from ticket_prices import add_quicktickets_price, add_ticketland_prices, quicktickets_url, title_keys
 
 TIME = re.compile(r'\b([01]?\d|2[0-3])[:.]([0-5]\d)\b')
-PRICE = re.compile(r'((?:от\s+)?\d[\d ]*(?:\s*[-–—]\s*\d[\d ]*)?)\s*(?:руб|₽)', re.I)
+PRICE = re.compile(r'((?:от\s+)?\d[\d ]*(?:[,.]\d{2})?(?:\s*[-–—]\s*\d[\d ]*(?:[,.]\d{2})?)?)\s*(?:руб|₽)', re.I)
 
 
 def document(html):
@@ -51,8 +52,27 @@ def parse_teatr21(url, today, log):
 
 
 def parse_puppet21(url, today, log):
+    soup = document(fetch(url))
+    ticket_links = {}
+    for card in soup.select('article.mec-event-article'):
+        link = card.select_one('.mec-event-title a[href]')
+        group = re.search(r'\bmec-toggle-(\d{4})(\d{2})-', ' '.join(card.get('class', [])))
+        day = text(card.select_one('.event-d'))
+        clock = TIME.fullmatch(text(card.select_one('.mec-event-loc-place')).partition('/')[0].strip())
+        if not link or not group or not day.isdigit() or not clock:
+            continue
+        target = quicktickets_url(link['href'])
+        if not target:
+            continue
+        try:
+            date = dt.date(int(group[1]), int(group[2]), int(day))
+        except ValueError:
+            continue
+        for name in title_keys(text(link)):
+            ticket_links.setdefault((date, name, f'{int(clock[1])}.{clock[2]}'), set()).add(target)
+
     events = []
-    for script in document(fetch(url)).select('script[type="application/ld+json"]'):
+    for script in soup.select('script[type="application/ld+json"]'):
         try:
             data = json.loads(script.get_text())
             if data.get('@type') != 'Event' or data.get('eventStatus', '').endswith('EventCancelled'):
@@ -68,7 +88,13 @@ def parse_puppet21(url, today, log):
         kind, value = ('Мастер-класс', title[len('Мастер-класс '):]) if title.startswith('Мастер-класс ') else ('', title)
         details = (data.get('location') or {}).get('name', '')
         clock, _, price = details.partition('/')
-        events.append(event(day, value, clock, price, data.get('url') or url, kind))
+        parsed = event(day, value, clock, price, data.get('url') or url, kind)
+        parsed['session_priced'] = True
+        if not parsed['price'] and len(parsed['times']) == 1:
+            targets = set().union(*(ticket_links.get((day, key, parsed['times'][0]), set()) for key in title_keys(title)))
+            if len(targets) == 1:
+                add_quicktickets_price(parsed, next(iter(targets)), document, log)
+        events.append(parsed)
     return events
 
 
@@ -130,21 +156,27 @@ def parse_chuvdram(url, today, log):
                 clock = next((h for h in headings if TIME.fullmatch(h)), '')
                 current = (year_for(day, MONTHS_NOM.index(month) + 1, today), clock) if day else None
                 continue
-            title_node = row.select_one('h2.elementor-heading-title')
-            if not current or not title_node or 'Купить билет' not in text(row):
+            details = row.select('h2.elementor-heading-title')
+            if not current or not details or 'Купить билет' not in text(row):
                 continue
             day, clock = current
             current = None
             if not day or day < today:
                 continue
-            title = text(title_node)
-            subtitle = next((h for h in headings if re.search(r'[«"]([^»"]+)[»"]', h)), '')
+            title_node, *subtitles = details
+            title = original_title = text(title_node)
+            labels = [text(node) for node in subtitles]
+            subtitle = next((label for label in labels if re.search(r'[«"]([^»"]+)[»"]', label)), labels[0] if labels else '')
             russian = re.search(r'[«"]([^»"]+)[»"]', subtitle)
             link = title_node.select_one('a[href]') or row.select_one('.elementor-widget-image a[href]')
-            kind = subtitle.split(maxsplit=1)[0].capitalize() if russian else ''
+            kind = subtitle.split(maxsplit=1)[0].capitalize() if subtitle else ''
             if russian:
                 title = russian[1]
-            events.append(event(day, title, clock, '', urljoin(page_url, link['href']) if link else page_url, kind))
+            record = event(day, title, clock, '', urljoin(page_url, link['href']) if link else page_url, kind)
+            button = row.select_one('button.tl_button[onclick*="https://csy.ticketland.ru/iframe-direct-sale/"]')
+            record.update(session_priced=True, ticketland=bool(button), original_title=original_title)
+            events.append(record)
+    add_ticketland_prices(events, log)
     return events
 
 

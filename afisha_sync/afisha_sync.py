@@ -72,6 +72,10 @@ def main():
                     generic.append(dict(s, events=ev))
                     last = max(e['d'] for e in ev)
                     info = f"событий {len(ev)}, до {last.strftime('%d.%m.%Y')}" + (' (официальный — приоритет для совпавших показов)' if s['official'] else '')
+                    priced_sessions = [e for e in ev if e.get('session_priced')]
+                    if priced_sessions:
+                        confirmed = sum(bool(e['price']) for e in priced_sessions)
+                        info += f'; цены получены для {confirmed} из {len(priced_sessions)} сеансов'
         except Exception as e:
             info = f'ошибка: {e}'
             log('  ! ' + info)

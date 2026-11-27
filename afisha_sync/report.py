@@ -44,7 +44,8 @@ def build_updates(res, site, reject, force):
         forced, why = force.get(eid, ({}, ''))
         for c in lst:
             for f, old, new in c['notes']:
-                if (eid, f) in reject: dec = 'не применяется: ' + reject[(eid, f)]
+                if f == 'Проверка цены': dec = 'цена не меняется — проверить сеанс'
+                elif (eid, f) in reject: dec = 'не применяется: ' + reject[(eid, f)]
                 elif forced and (f == 'Площадка' or f in conflict or (f == 'Цена' and 'IP_PROP19' in forced)):
                     dec = 'заменено ручным решением (см. строку «проверено вручную»)'
                 elif f == 'Площадка': dec = 'площадка отличается — проверить и добавить решение в config.xml'
@@ -56,7 +57,7 @@ def build_updates(res, site, reject, force):
                             'проверено вручную: ' + why, '', ''])
         r = dict(site[eid]); changed = False
         for f, vals in fields.items():
-            if f in conflict or f == 'Площадка' or (eid, f) in reject: continue
+            if f in conflict or f in ('Площадка', 'Проверка цены') or (eid, f) in reject: continue
             new = next(iter(vals))
             if f == 'Цена':
                 r['IP_PROP19'] = new; changed = True

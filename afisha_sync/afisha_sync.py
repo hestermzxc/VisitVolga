@@ -72,7 +72,7 @@ def main():
                     generic.append(dict(s, events=ev))
                     last = max(e['d'] for e in ev)
                     info = f"событий {len(ev)}, до {last.strftime('%d.%m.%Y')}" + (' (официальный — приоритет для совпавших показов)' if s['official'] else '')
-                    priced_sessions = [e for e in ev if e.get('session_priced')]
+                    priced_sessions = [e for e in ev if e.get('session_priced') and not e.get('sold_out')]
                     if priced_sessions:
                         confirmed = sum(bool(e['price']) for e in priced_sessions)
                         info += f'; цены получены для {confirmed} из {len(priced_sessions)} сеансов'
@@ -93,6 +93,7 @@ def main():
         f"  обновить сейчас:         {summary['updates_now']}  (import_updates_now.csv)\n"
         f"  обновить после fix:      {summary['updates_fix']}  (import_updates_after_fix.csv)\n"
         f"  новые события:           {summary['new']}  (import_new_events.csv)\n"
+        f"  сеансов без билетов:     {summary['sold_out']}\n"
         f"  нет в источниках:        {summary['missing']}\n"
         f"  отчёт:                   {summary['xlsx']}")
 

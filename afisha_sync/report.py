@@ -104,6 +104,7 @@ def write(res, rows, header, reject, force, out_dir, sources_log):
         ('Совпадают, без изменений', res['same']),
         ('Существующие события к обновлению', f'{len(upd)} ({len(upd_now)} — сразу, {len(upd_fix)} — после fix_xml_id.php)'),
         ('Новые — есть в источниках, нет на сайте', len(new_rows)),
+        ('Исключено сеансов без билетов', res['sold_out']),
         ('Есть на сайте, нет в источниках', len(res['missing'])),
         ('Пропущено при разборе', len(res['skipped'])),
         ('', ''),
@@ -149,4 +150,4 @@ def write(res, rows, header, reject, force, out_dir, sources_log):
     write_csv('import_updates_after_fix.csv', upd_fix)
     write_csv('import_new_events.csv', imp)
     return dict(xlsx=xlsx, updates_now=len(upd_now), updates_fix=len(upd_fix), new=len(imp), missing=len(res['missing']),
-                same=res['same'], skipped=len(res['skipped']), dup_xml=dup_xml)
+                same=res['same'], skipped=len(res['skipped']), sold_out=res['sold_out'], dup_xml=dup_xml)

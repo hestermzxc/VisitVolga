@@ -7,11 +7,12 @@ from http.cookiejar import CookieJar
 from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import HTTPCookieProcessor, build_opener
 
-from parsers import MONTHS_GEN, MONTHS_NOM, fetch, sp, year_for
+from parsers import MONTHS_GEN, MONTHS_NOM, fetch, offers_sold_out, sold_out_notice, sp, year_for
 from ticket_prices import add_quicktickets_price, add_ticketland_prices, quicktickets_url, title_keys
 
 TIME = re.compile(r'\b([01]?\d|2[0-3])[:.]([0-5]\d)\b')
 PRICE = re.compile(r'((?:от\s+)?\d[\d ]*(?:[,.]\d{2})?(?:\s*[-–—]\s*\d[\d ]*(?:[,.]\d{2})?)?)\s*(?:руб|₽)', re.I)
+PUPPET_TICKETS_URL = 'https://quicktickets.ru/cheboksary-teatr-kukol'
 
 
 def document(html):
@@ -46,9 +47,21 @@ def parse_teatr21(url, today, log):
         if date >= today:
             meta = text(card.select_one('.event__meta'))
             kind = meta.partition('·')[0].strip() if '·' in meta else ''
-            events.append(event(date, text(link), text(card.select_one('.event__time')),
-                                text(card.select_one('.event__price')), urljoin(url, link['href']), kind))
+            record = event(date, text(link), text(card.select_one('.event__time')),
+                           text(card.select_one('.event__price')), urljoin(url, link['href']), kind)
+            record['sold_out'] = sold_out_notice(card.stripped_strings)
+            events.append(record)
     return events
+
+
+def puppet_sold_out_sessions(log):
+    try:
+        schedule = document(fetch(PUPPET_TICKETS_URL, timeout=12, retries=0))
+    except OSError as error:
+        log(f'  ! не удалось прочитать наличие мест в Quick Tickets: {error}')
+        return set()
+    return {target for link in schedule.select('.quick-tickets-session-option--sold a.sessions__date-link[href]')
+            if (target := quicktickets_url(urljoin(PUPPET_TICKETS_URL, link['href'])))}
 
 
 def parse_puppet21(url, today, log):
@@ -71,6 +84,7 @@ def parse_puppet21(url, today, log):
         for name in title_keys(text(link)):
             ticket_links.setdefault((date, name, f'{int(clock[1])}.{clock[2]}'), set()).add(target)
 
+    sold_out_links = puppet_sold_out_sessions(log) if ticket_links else set()
     events = []
     for script in soup.select('script[type="application/ld+json"]'):
         try:
@@ -89,11 +103,15 @@ def parse_puppet21(url, today, log):
         details = (data.get('location') or {}).get('name', '')
         clock, _, price = details.partition('/')
         parsed = event(day, value, clock, price, data.get('url') or url, kind)
-        parsed['session_priced'] = True
-        if not parsed['price'] and len(parsed['times']) == 1:
+        parsed.update(session_priced=True, sold_out=offers_sold_out(data.get('offers')) or sold_out_notice([price]))
+        if not parsed['sold_out'] and len(parsed['times']) == 1:
             targets = set().union(*(ticket_links.get((day, key, parsed['times'][0]), set()) for key in title_keys(title)))
             if len(targets) == 1:
-                add_quicktickets_price(parsed, next(iter(targets)), document, log)
+                target = next(iter(targets))
+                if target in sold_out_links:
+                    parsed['sold_out'] = True
+                elif not parsed['price']:
+                    add_quicktickets_price(parsed, target, document, log)
         events.append(parsed)
     return events
 
@@ -128,7 +146,9 @@ def parse_maiteatr(url, today, log):
                 clock = ''
             for day in dates:
                 if day and day >= today:
-                    events.append(event(day, title, clock, '', urljoin(url, link['href']) if link else url, kind))
+                    record = event(day, title, clock, '', urljoin(url, link['href']) if link else url, kind)
+                    record['sold_out'] = len(dates) == 1 and sold_out_notice(card.stripped_strings)
+                    events.append(record)
     return events
 
 
@@ -154,12 +174,16 @@ def parse_chuvdram(url, today, log):
             if month in (h.lower() for h in headings):
                 day = next((h for h in headings if re.fullmatch(r'\d{1,2}', h)), '')
                 clock = next((h for h in headings if TIME.fullmatch(h)), '')
-                current = (year_for(day, MONTHS_NOM.index(month) + 1, today), clock) if day else None
+                current = (year_for(day, MONTHS_NOM.index(month) + 1, today), clock,
+                           sold_out_notice(row.stripped_strings)) if day else None
                 continue
             details = row.select('h2.elementor-heading-title')
-            if not current or not details or 'Купить билет' not in text(row):
+            if not current or not details:
                 continue
-            day, clock = current
+            day, clock, sold_out = current
+            sold_out = sold_out or sold_out_notice(row.stripped_strings)
+            if not sold_out and 'Купить билет' not in text(row):
+                continue
             current = None
             if not day or day < today:
                 continue
@@ -174,7 +198,7 @@ def parse_chuvdram(url, today, log):
                 title = russian[1]
             record = event(day, title, clock, '', urljoin(page_url, link['href']) if link else page_url, kind)
             button = row.select_one('button.tl_button[onclick*="https://csy.ticketland.ru/iframe-direct-sale/"]')
-            record.update(session_priced=True, ticketland=bool(button), original_title=original_title)
+            record.update(session_priced=True, ticketland=bool(button), original_title=original_title, sold_out=sold_out)
             events.append(record)
     add_ticketland_prices(events, log)
     return events
@@ -200,8 +224,14 @@ def parse_radario(url, today, log):
                     continue
                 lo, hi = item.get('minPrice'), item.get('maxPrice')
                 price = f'{lo:g}–{hi:g} руб.' if lo and hi and hi != lo else f'{lo:g} руб.' if lo else ''
+                count = item.get('ticketCount')
+                if type(count) is int and count > 0 and lo == hi == 0:
+                    price = '0 руб.'
                 link = f"https://radario.ru/customer/event/{item['id']}/info"
-                events[item['id']] = event(start.date(), item['title'], start.strftime('%H:%M'), price, link)
+                record = event(start.date(), item['title'], start.strftime('%H:%M'), price, link)
+                record['sold_out'] = (type(count) is int and count == 0
+                                      and not (item.get('redirect') or item.get('redirectUri')))
+                events[item['id']] = record
             if data['lastPage']:
                 break
             page += 1

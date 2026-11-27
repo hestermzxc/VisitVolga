@@ -41,6 +41,22 @@ def text_lines(h):
     return [l for l in (html.unescape(x).replace('\xa0', ' ').strip() for x in re.sub(r'<[^>]+>', '\n', h).split('\n')) if l]
 
 
+def sold_out_notice(lines):
+    labels = {'билетов нет', 'нет билетов', 'все билеты проданы', 'все билеты распроданы',
+              'билеты распроданы', 'билеты закончились', 'нет свободных мест', 'мест нет', 'sold out'}
+    return any(sp(line).casefold().strip('().! ') in labels for line in lines)
+
+
+def offers_sold_out(offers):
+    if not isinstance(offers, list):
+        offers = [offers] if offers else []
+    return bool(offers) and all(
+        isinstance(offer, dict)
+        and str(offer.get('availability', '')).rstrip('/').rsplit('/', 1)[-1] in {'SoldOut', 'OutOfStock'}
+        for offer in offers
+    )
+
+
 def year_for(d, m, today):
     """Год для даты без года: если дата «в прошлом» больше чем на 4 месяца — значит, следующий год."""
     try:
@@ -129,7 +145,8 @@ def parse_rusdram(url, today, log):
             if d and title:
                 ev.append(dict(d=d, times=[f'{int(tm.group(1))}.{tm.group(2)}'] if tm else [], title=title,
                                price=(price.replace('-', '–') + ' руб.') if re.search(r'\d', price) else '',
-                               raw='|'.join(block[:8]), url=url, place='', kind=''))
+                               raw='|'.join(block[:8]), url=url, place='', kind='',
+                               sold_out=sold_out_notice(block)))
             i = j
         else:
             i += 1
@@ -166,18 +183,23 @@ def parse_jsonld(url, today, log):
             if not m: continue
             d = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
             offers = o.get('offers') or {}
+            sold_out = offers_sold_out(offers)
             offers = offers[0] if isinstance(offers, list) and offers else offers
-            lo = offers.get('lowPrice') or offers.get('price') if isinstance(offers, dict) else None
+            lo = offers.get('lowPrice') if isinstance(offers, dict) else None
             hi = offers.get('highPrice') if isinstance(offers, dict) else None
+            if lo in (None, '') and isinstance(offers, dict):
+                lo = offers.get('price')
             price = ''
-            if lo and hi and str(lo) != str(hi): price = f'{int(float(lo))}–{int(float(hi))} руб.'
-            elif lo: price = f'{int(float(lo))} руб.'
+            if lo not in (None, ''):
+                price = f'{int(float(lo))} руб.'
+                if hi not in (None, '') and str(lo) != str(hi):
+                    price = f'{int(float(lo))}–{int(float(hi))} руб.'
             loc = o.get('location') or {}
             loc = loc[0] if isinstance(loc, list) and loc else loc
             ev.append(dict(d=d, times=[f'{int(m.group(4))}.{m.group(5)}'] if m.group(4) else [],
                            title=sp(html.unescape(str(o.get('name', '')))), price=price,
                            raw=f"{o.get('name')} | {o['startDate']} | {price}", url=o.get('url') or url,
-                           place=loc.get('name', '') if isinstance(loc, dict) else '', kind=''))
+                           place=loc.get('name', '') if isinstance(loc, dict) else '', kind='', sold_out=sold_out))
     log(f'  {url}: событий (schema.org) {len(ev)}')
     return ev
 

@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from compare import format_price, norm
-from parsers import UA, _walk, fetch
+from parsers import UA, _walk, fetch, offers_sold_out
 
 TICKETLAND_FEED = 'https://csvdata.ticketland.ru/yandex/foraffiliates_all.xml'
 CHUVDRAM_VENUE_ID = '4827051'
@@ -24,13 +24,14 @@ TICKETLAND_SESSION_PATH = re.compile(
 
 @dataclass(frozen=True)
 class SessionPrice:
-    minimum: Decimal
+    minimum: Decimal | None
     maximum: Decimal | None
     url: str
+    sold_out: bool = False
 
     @property
     def text(self):
-        return format_price(self.minimum, self.maximum)
+        return format_price(self.minimum, self.maximum) if self.minimum is not None else ''
 
 
 def amount(value):
@@ -96,7 +97,9 @@ def read_ticketland_feed(stream, requested):
                     minimum = amount(node.findtext('min_price'))
                     maximum = amount(node.findtext('max_price'))
                     count = amount(node.findtext('tickets_count'))
-                    if titles and minimum is not None and maximum is not None and minimum <= maximum and count:
+                    if titles and count == 0:
+                        result.setdefault(stamp, []).append((titles, SessionPrice(None, None, link, sold_out=True)))
+                    elif titles and minimum is not None and maximum is not None and minimum <= maximum and count:
                         result.setdefault(stamp, []).append((titles, SessionPrice(minimum, maximum, link)))
         root.clear()
     return result
@@ -110,17 +113,16 @@ def find_ticketland_price(entries, titles):
             return re.sub(r'([а-я])\1', r'\1', name)
 
         aliases = {key(title) for title in titles if len(title) >= 12}
-        matches = {price for names, price in entries if any(key(name) in aliases for name in names)}
+        matches = {price for names, price in entries if not price.sold_out and any(key(name) in aliases for name in names)}
     if len(matches) == 1:
         return next(iter(matches))
     return None
 
 
 def add_ticketland_prices(records, log):
-    requested = {
-        scheduled_minute(record['d'], record['times'][0])
-        for record in records if len(record['times']) == 1 and record.get('ticketland')
-    }
+    sessions = [record for record in records if record.get('ticketland')
+                and not record.get('sold_out') and len(record['times']) == 1]
+    requested = {scheduled_minute(record['d'], record['times'][0]) for record in sessions}
     if not requested:
         return
     try:
@@ -129,25 +131,25 @@ def add_ticketland_prices(records, log):
             prices = read_ticketland_feed(stream, requested)
     except (OSError, ValueError, ET.ParseError) as error:
         log(f'  ! не удалось получить фид цен Ticketland: {error}')
-        for record in records:
-            if record.get('ticketland'):
-                record['price_issue'] = 'цена не проверена: фид Ticketland недоступен'
+        for record in sessions:
+            record['price_issue'] = 'цена не проверена: фид Ticketland недоступен'
         return
 
-    checked = confirmed = 0
-    for record in records:
-        if not record.get('ticketland') or len(record['times']) != 1:
-            continue
-        checked += 1
+    confirmed = sold_out = 0
+    for record in sessions:
         start = scheduled_minute(record['d'], record['times'][0])
         names = title_keys(record['title'], record['original_title'])
         price = find_ticketland_price(prices.get(start, ()), names)
-        if price:
+        if price and price.sold_out:
+            record['sold_out'] = True
+            sold_out += 1
+        elif price:
             record.update(price=price.text, price_url=price.url)
             confirmed += 1
         else:
             record['price_issue'] = 'цена не проверена: в Ticketland нет однозначного совпадения по сеансу'
-    log(f'  Ticketland: цены подтверждены для {confirmed} из {checked} сеансов с виджетом')
+    log(f'  Ticketland: цены подтверждены для {confirmed} из {len(sessions)} сеансов с виджетом, '
+        f'распродано сеансов: {sold_out}')
 
 
 def quicktickets_url(link):
@@ -161,6 +163,7 @@ def quicktickets_url(link):
 
 def read_quicktickets_price(soup, url, start, names):
     prices = set()
+    session_offers = []
     for script in soup.select('script[type="application/ld+json"]'):
         try:
             data = json.loads(script.get_text(), parse_float=Decimal)
@@ -174,7 +177,9 @@ def read_quicktickets_price(soup, url, start, names):
                     or not (title_keys(entry.get('name') or '') & names)):
                 continue
             offers = entry.get('offers') or []
-            for offer in offers if isinstance(offers, list) else [offers]:
+            offers = offers if isinstance(offers, list) else [offers]
+            session_offers.extend(offers or [{}])
+            for offer in offers:
                 if not isinstance(offer, dict) or offer.get('priceCurrency') != 'RUB' or not str(offer.get('availability', '')).endswith(
                     ('/InStock', '/LimitedAvailability')
                 ):
@@ -188,6 +193,8 @@ def read_quicktickets_price(soup, url, start, names):
                     if value is not None:
                         # Публичная карточка может указывать только минимальную цену.
                         prices.add(SessionPrice(value, None if value else value, url))
+    if offers_sold_out(session_offers):
+        return SessionPrice(None, None, url, sold_out=True)
     if len(prices) == 1:
         return next(iter(prices))
     return None
@@ -203,7 +210,9 @@ def add_quicktickets_price(record, url, document, log):
     except OSError as error:
         log(f'  ! не удалось прочитать цену Quick Tickets: {error}')
         price = None
-    if price:
+    if price and price.sold_out:
+        record['sold_out'] = True
+    elif price:
         record.update(price=price.text, price_url=price.url)
     else:
         record['price_issue'] = 'цена не проверена: Quick Tickets не подтвердил цену этого сеанса'

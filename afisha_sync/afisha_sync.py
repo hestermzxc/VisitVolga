@@ -23,7 +23,7 @@ def load_config(path):
     base = os.path.dirname(os.path.abspath(path))
     rel = lambda p: os.path.normpath(os.path.join(base, p.strip()))
     cfg = dict(export=rel(root.findtext('export')), output=rel(root.findtext('output') or 'sverka'),
-               sources=[], venues=[], theatres={}, vname={}, reject={}, force={})
+               sources=[], venues=[], theatres={}, vname={}, reject={}, force={}, ticket_holds=set())
     for s in root.iter('source'):
         url = (s.get('url') or '').strip()
         if not url or s.get('enabled', 'true').lower() == 'false': continue
@@ -41,6 +41,9 @@ def load_config(path):
         cfg['reject'][(r.get('id'), r.get('field'))] = (r.text or '').strip()
     for f in root.iter('force'):
         cfg['force'][f.get('id')] = ({x.get('name'): (x.text or '').strip() for x in f.findall('field')}, f.get('reason', ''))
+    for hold in root.findall('./decisions/hold_ticket_session'):
+        start = dt.datetime.fromisoformat(hold.attrib['start'])
+        cfg['ticket_holds'].add((hold.attrib['url'].rstrip('/'), start.date(), f'{start.hour}.{start.minute:02d}'))
     return cfg
 
 
@@ -69,6 +72,12 @@ def main():
                             'или для этого сайта нужен отдельный парсер')
                     log('  ! ' + info)
                 else:
+                    if s['type'] == 'chuvdram':
+                        for event in ev:
+                            if len(event['times']) == 1 and not event.get('price_url'):
+                                key = (event['url'].rstrip('/'), event['d'], event['times'][0])
+                                if key in cfg['ticket_holds']:
+                                    event['ticket_hold'] = True
                     generic.append(dict(s, events=ev))
                     last = max(e['d'] for e in ev)
                     info = f"событий {len(ev)}, до {last.strftime('%d.%m.%Y')}" + (' (официальный — приоритет для совпавших показов)' if s['official'] else '')
@@ -94,6 +103,7 @@ def main():
         f"  обновить после fix:      {summary['updates_fix']}  (import_updates_after_fix.csv)\n"
         f"  новые события:           {summary['new']}  (import_new_events.csv)\n"
         f"  сеансов без билетов:     {summary['sold_out']}\n"
+        f"  отложено до продажи:     {summary['ticket_holds']}\n"
         f"  нет в источниках:        {summary['missing']}\n"
         f"  отчёт:                   {summary['xlsx']}")
 

@@ -207,7 +207,7 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         site.append(dict(r=r, d=TODAY if rec else a.date(), d2=dt.date(2099, 1, 1) if rec else last, name=r['IE_NAME'], rec=rec))
 
     cand, skipped = [], []
-    sold_out_sessions = set()
+    sold_out_sessions, held_sessions = set(), set()
     official = collections.defaultdict(list)
 
     def in_official_schedule(code, place, dates, title):
@@ -223,12 +223,12 @@ def run(rows, a21, generic, venues, theatres, vname, today):
             if e['d'] < TODAY or not e['title']: continue
             by_day.setdefault((e['d'], e['title']), []).append(e)
         for (d, title), sessions in by_day.items():
-            remaining = [item for item in sessions if not item.get('sold_out')]
+            remaining = [item for item in sessions if not (item.get('sold_out') or item.get('ticket_hold'))]
             e = (remaining or sessions)[0]
             times = sorted({time for item in sessions for time in item['times']}, key=lambda value: tuple(map(int, value.split('.'))))
             available_times = {time for item in remaining for time in item['times']}
             listed_times = [time for time in times if time in available_times]
-            sold_out_times = set(times) - available_times
+            excluded_times = set(times) - available_times
             price, swapped = fix_price(e['price'])
             flags = ['цена в источнике была перевёрнута — исправлено'] if swapped else []
             session_priced = any(item.get('session_priced') for item in sessions)
@@ -246,9 +246,10 @@ def run(rows, a21, generic, venues, theatres, vname, today):
                     flags.extend(reasons or ['цена не подтверждена для всех сеансов'])
             place = g['place'] or e['place']
             venue = g['code'] or place
-            sold_out_sessions.update((venue, d, norm(title), time) for time in sold_out_times)
-            if not remaining and not times:
-                sold_out_sessions.add((venue, d, norm(title), ''))
+            for time in excluded_times or ([''] if not remaining and not times else []):
+                slot = [item for item in sessions if not time or time in item['times']]
+                counter = sold_out_sessions if all(item.get('sold_out') for item in slot) else held_sessions
+                counter.add((venue, d, norm(title), time))
             if g['official'] and (g['code'] or place):
                 official[(g['code'] or place, d)].append(title)
             kind = e['kind'] if e['kind'].lower() in GENRE_OK | {'моноспектакль', 'мастер-класс'} else g['kind']
@@ -258,7 +259,7 @@ def run(rows, a21, generic, venues, theatres, vname, today):
                              title=re.sub(r'\s*\((премьера|гастроли)\)', '', title, flags=re.I), sitename=official_name(title, kind),
                              place=place, code=g['code'], p43='' if g['code'] else place,
                              price=price, tags='театр', flags=flags, session_priced=session_priced,
-                             session_prices=session_prices, sold_out_times=sold_out_times, sold_out=not remaining,
+                             session_prices=session_prices, excluded_times=excluded_times, excluded=not remaining,
                              raw=' | '.join(filter(None, [f"{d.strftime('%d.%m.%Y')} {', '.join(listed_times)}", e['raw'], updates]))))
 
     if a21:
@@ -364,7 +365,7 @@ def run(rows, a21, generic, venues, theatres, vname, today):
     for c in cand:
         c['dup'] = c['src'].endswith('анонсы') and any(
             t['d1'] in (c['dates'] or [c['d1']]) and sim(c['title'], t['title']) >= MATCH
-            and (not t.get('sold_out') or (t['code'] or t['p43']) == (c['code'] or c['p43']))
+            and (not t.get('excluded') or (t['code'] or t['p43']) == (c['code'] or c['p43']))
             for t in structured)
 
     # до какой даты источник покрывает площадку
@@ -414,18 +415,18 @@ def run(rows, a21, generic, venues, theatres, vname, today):
     changes, new, same, seen = [], [], 0, set()
     ticket_matches = set()
     for c in cand:
-        sold_out_times = c.get('sold_out_times', set())
-        if c.get('sold_out'):
+        excluded_times = c.get('excluded_times', set())
+        if c.get('excluded'):
             ticket_matches.update(s['r']['IE_ID'] for s, _ in matching_ticket_cards(c))
             c['venue_conflict'] = None
             continue
-        targets = matching_ticket_cards(c) if c.get('session_priced') or sold_out_times else []
-        if sold_out_times:
-            excluded = {s['r']['IE_ID'] for s, times in targets if times <= sold_out_times}
+        targets = matching_ticket_cards(c) if c.get('session_priced') or excluded_times else []
+        if excluded_times:
+            excluded = {s['r']['IE_ID'] for s, times in targets if times <= excluded_times}
             ticket_matches.update(excluded)
             if c['match'] and c['match']['r']['IE_ID'] in excluded:
                 c['match'], _ = best_match(c, excluded_ids=excluded)
-            targets = [(s, times - sold_out_times) for s, times in targets if times - sold_out_times]
+            targets = [(s, times - excluded_times) for s, times in targets if times - excluded_times]
         if c.get('session_priced'):
             if targets:
                 c['match'] = c['venue_conflict'] = None
@@ -457,12 +458,12 @@ def run(rows, a21, generic, venues, theatres, vname, today):
             continue
         if not s:
             if not c['dup']:
-                new.append(dict(c, times=[time for time in c['times'] if time not in sold_out_times]))
+                new.append(dict(c, times=[time for time in c['times'] if time not in excluded_times]))
             continue
         if s['rec']: same += 1; continue
         notes = []
         st, ct = site_times(s), sorted(set(c['times']))
-        if not sold_out_times and ct and st and ct != st: notes.append(('Время', ', '.join(st), ', '.join(ct)))
+        if not excluded_times and ct and st and ct != st: notes.append(('Время', ', '.join(st), ', '.join(ct)))
         sp_, cp = nums(s['r']['IP_PROP19']), nums(c['price'])
         if c.get('session_priced'):
             if not c['price'] or not same_ticket_price(s['r']['IP_PROP19'], c['price']):
@@ -537,7 +538,8 @@ def run(rows, a21, generic, venues, theatres, vname, today):
         if cnt[i['row']['IE_XML_ID']] > 1: i['row']['IE_XML_ID'] += '-' + i['row']['IE_CODE'][-6:]
 
     return dict(
-        same=same, skipped=skipped, sold_out=len(sold_out_sessions), site_count=len(site), cand_count=len(cand),
+        same=same, skipped=skipped, sold_out=len(sold_out_sessions), ticket_holds=len(held_sessions),
+        site_count=len(site), cand_count=len(cand),
         changes=[dict(id=s['r']['IE_ID'], name=s['r']['IE_NAME'], date=s['d'].strftime('%d.%m.%Y'), notes=n, src=c['srcid'], raw=c['raw'])
                  for c, n, s in changes],
         new=[dict(row=i['row'], src=i['c']['src'], url=i['c']['srcid'], raw=i['c']['raw'], tags=i['c']['tags'],

@@ -298,6 +298,12 @@
     Решения по прошедшим событиям можно удалять.
   -->
   <decisions>
+    <!-- До подтверждения продажи в Ticketland. Указываются страница спектакля и точное местное время. -->
+    <hold_ticket_session url="https://chuvdram.ru/repertoire/narspi/" start="2026-11-29T17:00"/>
+    <!-- Виджет «Тёщи» сообщает, что билеты закончились. -->
+    <hold_ticket_session url="https://chuvdram.ru/repertoire/tyosha-hunyama/" start="2026-12-05T14:00"/>
+    <!-- Ticketland опубликовал отмену сеанса 12 декабря в 17:00. -->
+    <hold_ticket_session url="https://chuvdram.ru/repertoire/zhizn-prozhit-ne-pole-pereiti/" start="2026-12-12T17:00"/>
     <reject id="2281" field="Время">quicktickets.ru (театр кукол): 21.11 начало 10:30 — на сайте верно</reject>
     <reject id="4297" field="Цена">afisha21 даёт две разные цены (650–1100 и 600–1000), volgaopera.ru цену не показывает — оставлено «от 600 руб.»</reject>
     <force id="5470" reason="maiteatr.ru: «от 800 рублей», 31.10 в 12:00 и 15:00">
